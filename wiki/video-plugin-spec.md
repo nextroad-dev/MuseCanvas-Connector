@@ -358,6 +358,8 @@ glob 的引号不可省略:由测试 runner 而非 shell 展开。
 
 ### 10.1 包格式
 
+> 计划改为单个 zip 包,见 [插件包格式规范(草案)](./plugin-package-spec.md)。以下为当前已实现的格式。
+
 - `multipart/form-data`,只允许两个字段:`manifest`(manifest JSON 文本)与 `file`(**单个 `.mjs` 文件**),各一个。
 - 体积上限 `PLUGIN_ARTIFACT_MAX_BYTES` = 5 MiB,在哈希与扫描之前检查。
 - 插件对象必须作为 `export default` 导出;worker 加载后会对 bundle 内的 `manifest` 重跑 `validatePluginManifest`,校验 `kind` / `id` / `version` 与上传记录一致,并检查接口必需方法齐全(`PLUGIN_INTERFACE_INVALID`)。
