@@ -1,0 +1,4 @@
+# Packed bytes must not depend on the checkout platform (reproducible zip sha256).
+template/** text eol=lf
+*.png binary
+*.webp binary

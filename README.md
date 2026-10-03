@@ -6,7 +6,7 @@ MuseCanvas 的图像与视频生成能力走「**media provider 内核 + 插件*
 
 ## 仓库状态
 
-当前仓库只包含规范文档，内容同步至主仓库 `c6616dd`（2026-10-02）。插件内核与内置插件源码仍在主仓库 [nextroad-dev/MuseCanvas](https://github.com/nextroad-dev/MuseCanvas)：
+当前仓库包含规范文档、一个可直接打包的插件模板（`template/`）与插件打包工具（`tools/`），规范内容同步至主仓库 `c6616dd`（2026-10-02）。插件内核与内置插件源码仍在主仓库 [nextroad-dev/MuseCanvas](https://github.com/nextroad-dev/MuseCanvas)：
 
 | 路径（主仓库） | 内容 |
 | --- | --- |
@@ -19,12 +19,40 @@ MuseCanvas 的图像与视频生成能力走「**media provider 内核 + 插件*
 
 ## 仓库内容
 
-| 文档 | 内容 |
+| 路径 | 内容 |
 | --- | --- |
 | [`wiki/README.md`](./wiki/README.md) | 规范索引与适用范围 |
 | [`wiki/video-plugin-spec.md`](./wiki/video-plugin-spec.md) | 媒体插件开发规范：内核契约、凭据契约、模型能力声明、生命周期与状态机、输出契约、安全红线、错误模型、测试门禁、上传插件 |
+| [`wiki/plugin-package-spec.md`](./wiki/plugin-package-spec.md) | 插件包格式规范（草案）：zip 包结构、`manifest.json` 的 `package` 块、安全校验 |
+| [`template/`](./template/README.md) | 插件模板：异步视频插件示例（占位供应商），manifest 单一来源，附生命周期单测 |
+| `tools/` | 打包工具：esbuild 构建自包含 ESM bundle、本地跑包校验、产出可复现的 zip |
 
 > 规范本身即门禁依据：违反契约测试的 PR 不予合入。
+
+## 快速开始：构建 → 打包 → 上传
+
+需要 Node.js ≥ 22 与 pnpm（经 `corepack` 使用即可）。
+
+```bash
+corepack pnpm install
+corepack pnpm typecheck                                   # 模板类型检查
+corepack pnpm test                                        # 工具与模板的单测
+corepack pnpm pack:plugin template                        # 构建 + 本地校验 + 写出 zip，打印 sha256
+corepack pnpm check:plugin template/dist/example-video-0.1.0.zip   # 校验已有 zip
+```
+
+`pack:plugin <目录>` 依次完成：
+
+1. 以 `src/index.ts` 为入口，用 esbuild 打成**单个自包含 ESM 文件**（`format: esm`、`platform: neutral`、全部内联、无 external），文件名取 `manifest.json` 的 `package.entry`；
+2. 收集 `manifest.json`、bundle、`README.md` / `CHANGELOG.md` / `LICENSE` 与 `package.icon`（只收这些，不做通配）；
+3. 按固定顺序、固定时间戳写 zip（同样的输入得到同样的 sha256）；
+4. 对 zip 跑一遍与插件包格式规范第 4 节对应的本地校验，并导入 bundle 比对 `bundle.manifest` 与 `manifest.json`（去掉 `package`）；任一错误则不写 zip。
+
+产物在 `<目录>/dist/`：`<id>-<version>.zip`、入口 bundle，以及过渡期用的 `manifest.legacy.json`。`check:plugin <zip>` 对任意 zip 跑同一套校验；对不信任的 zip 加 `--no-import`（跳过导入执行 bundle，也就跳过 manifest 比对）。
+
+上传：在管理台“插件”页上传 zip。zip 上传仍在主仓库实现中（规范为草案），在此之前用旧格式上传：`manifest` 字段粘贴 `dist/manifest.legacy.json` 的内容，`file` 选择 `dist/plugin.mjs`。
+
+> 本地校验是 MuseCanvas 服务端规则的**便利副本**（`tools/lib/plugin-scan.mjs` 移植自主仓库 `packages/providers/src/core/plugin-scan.ts`，`tools/lib/check-package.mjs` 对应规范第 4 节与主仓库 `core/plugin-package.ts`），以 MuseCanvas 为准：本地通过不保证服务端接受。模型 `capabilities` 本地只做结构检查，完整校验（`validateModelCapabilities`）只在服务端进行。
 
 ## 架构速览
 
@@ -74,14 +102,14 @@ cancel → canceled / waiting（仍在收尾）
 
 ## 上传插件
 
-运维设置 `ALLOW_PLUGIN_UPLOAD=true` 后，管理员可在管理台上传第三方插件包（`manifest` JSON + 单个 `.mjs`，≤ 5 MiB）。要点：
+运维设置 `ALLOW_PLUGIN_UPLOAD=true` 后，管理员可在管理台上传第三方插件包（当前为 `manifest` JSON + 单个 `.mjs`，≤ 5 MiB；计划改为单个 zip 包，见[插件包格式规范（草案）](./wiki/plugin-package-spec.md)）。要点：
 
 - bundle 必须自包含、**零运行时 import**（只允许 `import type`），以 `export default` 导出插件对象；源码扫描拒绝 `fetch`、`process.*`、`require`、`eval`、Node 内建模块与顶层 `await`。
 - `allowedHosts` 只能是精确主机或 `*.` 前缀，禁止 IP 与私网地址；`credential.baseUrl.policy` 不得为 `any-https`。
 - 不得占用内置插件的 `id@version` 或 `providerId`（`openai` / `anthropic` / `volcengine` / `google`）。
 - `(plugin_id, plugin_version)` 一次写入、不可复用；修复只能升版本重传。
 
-详见规范第 10 节。
+详见规范第 10 节；从模板起步见上文“快速开始”。
 
 ## 安全红线
 
@@ -141,4 +169,4 @@ CI（主仓库 `.github/workflows/media-quality.yml`）执行同一门禁，集�
 
 ## 许可
 
-规范与实现代码来自主仓库 [MuseCanvas](https://github.com/nextroad-dev/MuseCanvas)，该仓库采用 Apache License 2.0；本仓库当前尚未包含独立的 `LICENSE` 文件。
+规范与实现代码来自主仓库 [MuseCanvas](https://github.com/nextroad-dev/MuseCanvas)，该仓库采用 Apache License 2.0；本仓库当前尚未包含独立的 `LICENSE` 文件。`template/LICENSE`（MIT）只是插件模板随包交付的许可证示例。

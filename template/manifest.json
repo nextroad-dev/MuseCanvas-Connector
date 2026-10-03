@@ -1,0 +1,96 @@
+{
+  "kind": "media",
+  "id": "example-video",
+  "version": "0.1.0",
+  "displayName": "Example Video (template)",
+  "description": "Template async video plugin against a placeholder vendor API. Replace before use.",
+  "modalities": ["video"],
+  "allowedHosts": ["api.example-video.example", "cdn.example-video.example"],
+  "credentialSchemas": ["legacy-api-key-v1"],
+  "credential": {
+    "providerId": "example-video",
+    "schemaId": "legacy-api-key-v1",
+    "secret": {
+      "format": "text",
+      "label": "Example Video API Key",
+      "placeholder": "ev-...",
+      "help": "API key from the Example Video console."
+    },
+    "baseUrl": {
+      "default": "https://api.example-video.example",
+      "policy": "fixed"
+    }
+  },
+  "models": [
+    {
+      "id": "example-video-1",
+      "name": "Example Video 1",
+      "modalities": ["video"],
+      "capabilities": {
+        "modes": ["text_to_video", "image_to_video"],
+        "parameters": [
+          {
+            "type": "integer",
+            "name": "durationSeconds",
+            "label": "时长（秒）",
+            "min": 2,
+            "max": 10,
+            "defaultValue": 5,
+            "ui": { "control": "slider", "unit": "秒", "order": 1 }
+          },
+          {
+            "type": "enum",
+            "name": "aspectRatio",
+            "label": "宽高比",
+            "options": ["16:9", "9:16", "1:1"],
+            "defaultValue": "16:9",
+            "ui": { "control": "select", "order": 2 }
+          },
+          {
+            "type": "enum",
+            "name": "resolution",
+            "label": "分辨率",
+            "options": ["720p", "1080p"],
+            "defaultValue": "720p",
+            "ui": { "control": "segmented", "order": 3 }
+          },
+          {
+            "type": "integer",
+            "name": "seed",
+            "label": "随机种子",
+            "min": 0,
+            "max": 2147483647,
+            "ui": { "control": "number", "advanced": true, "order": 4 }
+          }
+        ],
+        "inputSlots": [
+          {
+            "role": "first_frame",
+            "required": false,
+            "minCount": 0,
+            "maxCount": 1,
+            "allowedMediaKinds": ["image"],
+            "label": "首帧"
+          }
+        ],
+        "maxCount": 1,
+        "supportedMediaKinds": ["video"],
+        "declaredBy": "plugin-manifest"
+      },
+      "defaults": {
+        "durationSeconds": 5,
+        "aspectRatio": "16:9",
+        "resolution": "720p"
+      }
+    }
+  ],
+  "package": {
+    "format": 1,
+    "entry": "plugin.mjs",
+    "icon": "assets/icon.png",
+    "readme": "README.md",
+    "license": "MIT",
+    "author": "MuseCanvas Connector",
+    "homepage": "https://github.com/nextroad-dev/MuseCanvas-Connector"
+  }
+}

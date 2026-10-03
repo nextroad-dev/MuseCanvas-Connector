@@ -1,6 +1,6 @@
 # 插件包格式规范 (Plugin Package Spec) — 草案
 
-状态:**草案,待评审,未实现** · 取代对象:媒体插件开发规范第 10.1 节"包格式"(单 `.mjs` + `manifest` 表单字段) · 依据:MuseCanvas 主仓库 `c6616dd` 的上传与加载实现
+状态:**草案,待评审,服务端实现中**(作者侧模板与本地打包工具已提供,见第 8.1 节) · 取代对象:媒体插件开发规范第 10.1 节"包格式"(单 `.mjs` + `manifest` 表单字段) · 依据:MuseCanvas 主仓库 `c6616dd` 的上传与加载实现
 
 ---
 
@@ -37,6 +37,8 @@
 
 - 文件可以直接位于 zip 根目录,也可以统一包在**恰好一层**顶级目录里(如 `my-plugin-1.2.0/manifest.json`,常见于直接压缩文件夹);宿主剥掉这一层。两层及以上、或根目录与顶级目录混放,一律拒绝。
 - `manifest.json` 必须位于(剥层后的)根目录,文件名大小写敏感。
+- **macOS 归档元数据静默忽略**:路径中任意一段为 `__MACOSX` 的条目(任意深度,包括包裹目录内),以及任意深度、文件名恰为 `.DS_Store` 的文件(均大小写敏感,与 Finder 写法一致)。它们先照常过第 4 节第 3 步的路径安全检查(所以 `__MACOSX/../x` 仍被拒绝),仍计入条目数、解压总量(按声明值)与 zip 大小上限;但不解压、不进文件清单、不产生 finding,判断"是否恰好一层包裹目录"时也先把它们排除。参考打包工具从不产出这类文件。
+- 目录条目(以 `/` 结尾、大小为 0)允许存在,计入条目数;带数据的目录条目拒绝。
 
 ### 2.1 允许的文件
 
@@ -49,15 +51,26 @@
 
 其他一切文件(`.js` / `.cjs` / 第二个 `.mjs` / `.wasm` / `.node` / `.json`(manifest 之外) / `.svg` / `.html` / 嵌套 `.zip` 等)均拒绝。`.svg` 不允许,因为它可以携带脚本,而管理台会直接渲染图标。
 
+- 扩展名比较不区分大小写;无扩展名的 `LICENSE` 须恰为大写 `LICENSE`。
+- 文档可以位于任意深度(如 `docs/usage.md`),都要通过 256 KiB 上限与第 4 节第 7 步的文本校验。管理台展示的文档只取以下几份:
+  - README:`package.readme` 指定的文件(任意深度,须是包内的文档文件);未指定时取剥层后根目录的 `README.md`(文件名不区分大小写);
+  - CHANGELOG:根目录的 `CHANGELOG.md` 或 `CHANGELOG.txt`(不区分大小写);
+  - LICENSE:根目录的 `LICENSE`、`LICENSE.md` 或 `LICENSE.txt`(不区分大小写)。
+
+  同一类有多个候选时按路径字节序取第一个。其余 `.md` / `.txt`(包括更深路径下的文档)**允许并出现在包内文件清单(`package_files`)里,但不存入文档列、不在管理台展示**。
+- 图标只接受静态图像:APNG(含 `acTL` 块)与动画 WebP 拒绝;服务端还会完整解码像素,并要求解码尺寸与文件头一致。
+
 ### 2.2 包级限制
 
 | 项 | 上限 |
 |----|------|
 | zip 文件本身 | 6 MiB |
 | 解压后总大小 | 8 MiB |
-| 条目数 | 32 |
-| 单条目压缩比 | ≤ 100:1(防 zip 炸弹;按 central directory 声明值预检,解压时按实际字节流再检) |
+| 条目数 | 32(含目录条目与被忽略的 macOS 元数据) |
+| 单条目压缩比 | ≤ 100:1(防 zip 炸弹;按 central directory 声明值预检,即 `uncompressed > 100 × max(compressed, 1)` 拒绝;解压时按实际字节流再检,超过声明大小即拒绝) |
 | 路径长度 | ≤ 200 字节,UTF-8 |
+
+压缩比上限可能误伤高度重复的文本(如大段重复的表格或填充内容,deflate 后比例可超过 100:1)。参考打包工具(本仓库 `tools/`)遇到压缩后比例超过 100:1、或压缩后不变小的文件,改用 `stored`(不压缩)写入,比例即为 1:1;自行打包的作者遇到 `PLUGIN_PACKAGE_BOMB` 时可同样处理。
 
 ---
 
@@ -89,6 +102,8 @@
 }
 ```
 
+`package` 块只认上面 7 个键,出现其他键(例如 `minHostVersion`)即拒绝(`PLUGIN_PACKAGE_INVALID`);缺少 `package` 块或 `entry` 记为 `PLUGIN_PACKAGE_ENTRY_MISSING`;`package.icon` 指向 `.svg` 记为 `PLUGIN_PACKAGE_FORBIDDEN_FILE`。`homepage` 须为不含用户名 / 密码的 https URL。
+
 ### 3.1 manifest 与 bundle 的一致性
 
 bundle 的 `export default` 对象仍须带 `manifest`(运行时接口不变)。加载时 worker 要求:
@@ -107,11 +122,11 @@ API 侧在**写入存储之前**按以下顺序校验,任一失败即拒绝安�
 
 1. **大小预检**:zip 字节数 ≤ 6 MiB(在读取任何条目之前)。
 2. **结构解析**:只读 central directory;拒绝加密条目、zip64、多卷、非 `stored` / `deflate` 的压缩方法、central directory 与 local header 不一致的条目。
-3. **路径安全**:拒绝绝对路径、`..` 段、反斜杠、盘符(`C:`)、NUL 与控制字符;拒绝 Unix 符号链接与设备文件(按 external attributes 判断);路径在 NFC 规范化、转小写后不得重名(防 Windows / macOS 上大小写或 Unicode 等价的覆盖)。
+3. **路径安全**:拒绝绝对路径、`..` 与 `.` 段、空段、反斜杠、路径中任何位置的 `:`(盘符 `C:` 与 NTFS 备用数据流)、NUL 与控制字符;条目名一律按严格 UTF-8 解码(不看 general purpose flag 的 UTF-8 位),不是合法 UTF-8 的名称(如 CP437 / GBK 编码的旧压缩工具产物)作为不安全路径拒绝;拒绝 Unix / macOS 主机写入的符号链接与设备文件(按 external attributes 判断);路径在 NFC 规范化、转小写后不得重名(防 Windows / macOS 上大小写或 Unicode 等价的覆盖),也不得嵌套在一个同名文件之下。此步对所有条目执行,之后才剔除第 2 节所述的 macOS 元数据。
 4. **清单约束**:第 2.1 / 2.2 节的白名单、数量、单文件与总量上限、压缩比。
-5. **manifest**:`manifest.json` 须为 UTF-8 JSON;`package` 块合法;其余部分跑现有 `validatePluginManifest`。
+5. **manifest**:`manifest.json` 须为 UTF-8 JSON(开头的 BOM 会被去掉);`package` 块合法(第 3 节,未知键拒绝);其余部分跑现有 `validatePluginManifest`。
 6. **入口**:`package.entry` 存在且是包内唯一的 `.mjs`;对其跑现有 `scanPluginSource`(规则不变)。
-7. **资源**:图标解码校验格式与尺寸;README / CHANGELOG / LICENSE 须为合法 UTF-8。
+7. **资源**:图标解码校验格式与尺寸,拒绝动画图标;所有文档(`.md` / `.txt` / `LICENSE`,不只是展示的几份)须为合法 UTF-8 且不含 NUL(数据库 `text` 列无法存 NUL),开头的 BOM 会被去掉。
 8. **身份**:沿用 `PLUGIN_ID_RESERVED`、`PROVIDER_ID_RESERVED`、版本不可变检查。
 
 解压全程在内存中按条目流式进行,每个条目都设字节上限,**绝不写到文件系统的解压路径上**。
@@ -127,6 +142,10 @@ API 侧在**写入存储之前**按以下顺序校验,任一失败即拒绝安�
 | `PLUGIN_PACKAGE_ENTRY_MISSING` | `package.entry` 缺失或不存在 |
 | `PLUGIN_PACKAGE_BOMB` | 压缩比超限 |
 | `PLUGIN_MANIFEST_MISMATCH` | (worker)bundle manifest 与 `manifest.json` 规范化后不相等 |
+| `PLUGIN_PACKAGE_UNAVAILABLE` | HTTP 503:下载原始 zip(`GET /admin/plugins/:id/package`)或图标(`GET /admin/plugins/:id/icon`)时对象存储读取失败,或 zip 与 `package_sha256` 不符 |
+| `PLUGIN_UPLOAD_LEGACY_FORMAT` | **警告**(`severity: warn`,不阻断):使用旧的 `manifest` + `file` 两字段上传;只出现在响应里,不写入扫描报告 |
+
+包级校验失败时,服务端 findings 的 `rule` 即上表错误码;扫描与 manifest 校验沿用 `PLUGIN_SCAN_FAILED` / `INVALID_PLUGIN_MANIFEST` 及其各自的 rule。
 
 ---
 
@@ -142,7 +161,7 @@ API 侧在**写入存储之前**按以下顺序校验,任一失败即拒绝安�
 | 入口 bundle | `plugin-packages/<id>/<version>/<entry_sha256>.mjs` | **与现有键格式相同**,worker 照旧读取 |
 | 图标 | `plugin-packages/<id>/<version>/icon-<sha256>.<ext>` | 管理台展示 |
 
-README / CHANGELOG / LICENSE 文本直接存进数据库(各 ≤ 256 KiB)。
+第 2.1 节选出的 README / CHANGELOG / LICENSE 文本直接存进数据库(各 ≤ 256 KiB);其他文档只出现在 `package_files` 清单中。
 
 ### 5.2 数据库
 
@@ -156,6 +175,8 @@ README / CHANGELOG / LICENSE 文本直接存进数据库(各 ≤ 256 KiB)。
 | `package_files` | `jsonb NOT NULL DEFAULT '[]'` | `[{ path, sizeBytes, sha256 }]` |
 | `package_meta` | `jsonb NOT NULL DEFAULT '{}'` | `package` 块(author、license、homepage、icon 键) |
 | `readme` / `changelog` / `license_text` | `text` | 文档文本 |
+
+文档文本**不随列表返回**:插件列表 DTO 只带 `docs: { readme, changelog, licenseText }` 三个布尔标志(以及 `hasIcon`、`packageFiles`、`packageMeta`、`packageDigest`),文本按需从 `GET /admin/plugins/:id/docs` 获取,响应为 `{ readme, changelog, licenseText }`(字符串或 `null`;旧格式行一律为 `null`)。文档是作者提供的内容,客户端只能按纯文本渲染,不得当作 HTML。
 
 `object_key` / `artifact_sha256` / `artifact_size_bytes` 的语义**不变**,仍指入口 bundle,因此 worker 的完整性校验不需要改。`(plugin_id, plugin_version)` 仍然一次写入。
 
@@ -204,7 +225,25 @@ README / CHANGELOG / LICENSE 文本直接存进数据库(各 ≤ 256 KiB)。
 2. 写 `manifest.json`:现有 manifest 加上 `package` 块;bundle 里的 `manifest` 必须与之一致(建议构建时直接从 `manifest.json` 导入并内联)。
 3. 按第 2 节目录结构打成 zip 上传。
 
-本仓库后续可提供插件模板与打包脚本(构建 bundle、内联 manifest、本地跑第 4 节的校验、产出 zip)。
+### 8.1 模板与打包工具
+
+本仓库提供:
+
+- **插件模板** [`template/`](../template/README.md):一个完整的异步视频插件(占位供应商 `api.example-video.example`),`src/index.ts` 直接 `import` `manifest.json` 并去掉 `package` 块作为 `plugin.manifest`,由 esbuild 内联,天然满足第 3.1 节的一致性要求。宿主类型以 `import type` 引用本地副本 `src/host-types.ts`(主仓库包未发布到 npm),错误以 `message = code` 且携带 `diagnostic` 的 `Error` 抛出(worker `classifySubmitError` 识别的上传插件形状)。
+- **打包工具** `tools/cli.mjs`(仓库根目录执行):
+
+```bash
+corepack pnpm pack:plugin <插件目录> [--out <file.zip>]   # 构建 + 本地校验 + 写出 zip,打印 sha256
+corepack pnpm check:plugin <file.zip> [--no-import]       # 校验已有 zip
+corepack pnpm build:plugin <插件目录>                      # 只构建 bundle
+```
+
+  - 构建:esbuild `format: esm`、`platform: neutral`、`bundle: true`、无 external、去掉注释;构建后检查 bundle 不含任何 import,并把 esbuild 末尾的 `export { x as default }` 改写为字面量 `export default x`(`scanPluginSource` 只识别后者,否则报 `NO_DEFAULT_EXPORT` 警告)。
+  - 打包:只收 `manifest.json`、入口、`README.md` / `CHANGELOG.md` / `LICENSE*` 与 `package.icon`,平铺在 zip 根目录;`manifest.json` 在前,其余按路径字节序;时间戳固定为 1980-01-01 00:00,外部属性固定;压缩后比例超过 100:1 或不变小的文件改用 `stored`;从不产出 `__MACOSX/` 或 `.DS_Store`。同样的输入得到同样的 sha256。
+  - 校验:按第 4 节第 1–8 步顺序执行(第 8 步只检查内置 `id` / `providerId` 的静态快照,版本不可变需服务端判断),再导入 bundle,按第 5.3 节比较 `validatePluginManifest` 规范化结果,并检查接口必需方法。`--no-import` 跳过导入(不执行 bundle 代码)。
+  - 过渡期:同时写出 `dist/manifest.legacy.json`(即 `manifest.json` 去掉 `package`),可配合 `dist/plugin.mjs` 走旧的两字段上传。
+
+> 本地校验是服务端规则的**便利副本**,以 MuseCanvas 为准:`tools/lib/plugin-scan.mjs` 移植自主仓库 `packages/providers/src/core/plugin-scan.ts`(同步至 `c6616dd`),`tools/lib/check-package.mjs` 对应本节规范与主仓库 `core/plugin-package.ts`。模型 `capabilities` 本地只做结构检查,完整的 `validateModelCapabilities` 只在服务端运行。本地通过不保证服务端接受;规则变更时同步更新这两个文件。
 
 ---
 

@@ -1,0 +1,22 @@
+{
+  "name": "musecanvas-connector",
+  "private": true,
+  "type": "module",
+  "description": "MuseCanvas media plugin spec, plugin template and zip packaging tools",
+  "packageManager": "pnpm@12.8.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build:plugin": "node tools/cli.mjs build",
+    "pack:plugin": "node tools/cli.mjs pack",
+    "check:plugin": "node tools/cli.mjs check",
+    "typecheck": "tsc -p template/tsconfig.json",
+    "test": "node --test \"tools/test/*.test.mjs\" \"template/test/*.test.mjs\""
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "fflate": "0.8.3",
+    "typescript": "5.9.3"
+  }
+}
